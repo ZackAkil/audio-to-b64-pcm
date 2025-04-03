@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Audio Recorder to Base64 PCM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @font-face {
+        font-family: "LucideIcons";
+        src: url(https://cdn.jsdelivr.net/npm/lucide-static@latest/font/Lucide.ttf)
+          format("truetype");
+      }
+      .lucide {
+        font-family: "LucideIcons";
+        font-size: 1.25rem; /* Adjust icon size */
+        line-height: 1;
+        display: inline-block;
+        font-style: normal;
+        font-weight: normal;
+        font-variant: normal;
+        text-rendering: auto;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      /* Simple loading spinner */
+      .spinner {
+        border: 4px solid rgba(0, 0, 0, 0.1);
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        border-left-color: #09f; /* Blue color */
+        animation: spin 1s ease infinite;
+        display: inline-block;
+        margin-right: 8px;
+        vertical-align: middle;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      /* Ensure textarea is readable */
+      textarea {
+        word-break: break-all;
+      }
+    </style>
+    <script>
+      // Initialize Tailwind CSS configuration
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "sans-serif"], // Use Inter font
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body
+    class="bg-gray-100 font-sans flex items-center justify-center min-h-screen p-4"
+  >
+    <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-3xl">
+      <h1 class="text-2xl font-bold mb-6 text-center text-gray-800">
+        Audio Recorder to Base64 PCM
+      </h1>
+
+      <div class="mb-4">
+        <label
+          for="audioDeviceSelect"
+          class="block text-sm font-medium text-gray-700 mb-1"
+          >Select Microphone:</label
+        >
+        <select
+          id="audioDeviceSelect"
+          class="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm bg-white disabled:opacity-50 disabled:bg-gray-200"
+        >
+          <option value="">Waiting for permissions...</option>
+        </select>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div>
+          <label
+            for="targetSampleRate"
+            class="block text-sm font-medium text-gray-700 mb-1"
+            >Target Sample Rate (Hz):</label
+          >
+          <select
+            id="targetSampleRate"
+            class="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm bg-white disabled:opacity-50 disabled:bg-gray-200"
+          >
+            <option value="8000">8000</option>
+            <option value="16000">16000</option>
+            <option value="22050">22050</option>
+            <option value="24000">24000</option>
+            <option value="32000">32000</option>
+            <option value="44100" selected>44100</option>
+            <option value="48000">48000</option>
+          </select>
+          <p id="actualRateInfo" class="text-xs text-gray-500 mt-1"></p>
+        </div>
+        <div>
+          <label
+            for="targetChannels"
+            class="block text-sm font-medium text-gray-700 mb-1"
+            >Target Channels:</label
+          >
+          <select
+            id="targetChannels"
+            class="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm bg-white disabled:opacity-50 disabled:bg-gray-200"
+          >
+            <option value="1" selected>1 (Mono)</option>
+            <option value="2">2 (Stereo)</option>
+          </select>
+          <p id="actualChannelInfo" class="text-xs text-gray-500 mt-1"></p>
+        </div>
+        <div>
+          <label
+            for="targetBitDepth"
+            class="block text-sm font-medium text-gray-700 mb-1"
+            >Target Bit Depth / Format:</label
+          >
+          <select
+            id="targetBitDepth"
+            class="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm bg-white disabled:opacity-50 disabled:bg-gray-200"
+          >
+            <option value="8u">8-bit Unsigned Int</option>
+            <option value="16s" selected>16-bit Signed Int (LE)</option>
+            <option value="32f">32-bit Float (LE)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="text-center mb-4 space-x-4">
+        <button
+          id="recordButton"
+          class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition duration-150 ease-in-out inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <span class="lucide mr-2">&#xea1f;</span> Record
+        </button>
+        <button
+          id="stopButton"
+          class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition duration-150 ease-in-out inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+        >
+          <span class="lucide mr-2">&#xea6f;</span> Stop
+        </button>
+      </div>
+
+      <div
+        id="statusArea"
+        class="mt-4 p-3 text-center text-sm rounded-md min-h-[40px]"
+        role="alert"
+      >
+        Select microphone and click Record.
+      </div>
+
+      <div class="mt-6">
+        <label
+          for="base64Output"
+          class="block text-sm font-medium text-gray-700 mb-1"
+          >Base64 PCM Output:</label
+        >
+        <textarea
+          id="base64Output"
+          rows="8"
+          class="w-full p-3 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 shadow-sm bg-gray-50 readonly"
+          readonly
+          placeholder="Base64 encoded audio will appear here..."
+        ></textarea>
+        <button
+          id="copyButton"
+          class="mt-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-4 rounded-md shadow-md transition duration-150 ease-in-out inline-flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+        >
+          <span class="lucide mr-2">&#xe935;</span> Copy to Clipboard
+        </button>
+        <span id="copyStatus" class="ml-2 text-sm text-green-600"></span>
+      </div>
+    </div>
+
+    <script>
+      // --- DOM Elements ---
+      const audioDeviceSelect = document.getElementById("audioDeviceSelect");
+      const targetSampleRateSelect =
+        document.getElementById("targetSampleRate");
+      const targetChannelsSelect = document.getElementById("targetChannels");
+      const targetBitDepthSelect = document.getElementById("targetBitDepth");
+      const recordButton = document.getElementById("recordButton");
+      const stopButton = document.getElementById("stopButton");
+      const statusArea = document.getElementById("statusArea");
+      const base64Output = document.getElementById("base64Output");
+      const copyButton = document.getElementById("copyButton");
+      const copyStatus = document.getElementById("copyStatus");
+      const actualRateInfo = document.getElementById("actualRateInfo");
+      const actualChannelInfo = document.getElementById("actualChannelInfo");
+
+      // --- Audio Recording Variables ---
+      let audioContext = null;
+      let mediaStream = null;
+      let mediaStreamSource = null;
+      let scriptProcessorNode = null;
+      let recordedChunks = []; // Array to store raw Float32 PCM data chunks
+      let isRecording = false;
+      const bufferSize = 4096; // Processing buffer size
+      let actualSampleRate = 0; // To store the rate the audio was actually recorded at
+      let actualNumChannels = 0; // To store the channels the audio was actually recorded with
+
+      // --- Initialization ---
+      async function init() {
+        recordButton.disabled = true; // Disable until devices are listed
+        stopButton.disabled = true;
+        copyButton.disabled = true;
+        setInputsDisabled(true); // Disable format selects initially
+
+        try {
+          // Request microphone permission (basic audio constraint)
+          // We'll get specific device stream later
+          await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false,
+          });
+          console.log("Microphone permission granted.");
+          await listAudioDevices();
+          recordButton.disabled = false; // Enable record button now
+          setInputsDisabled(false); // Enable format selects
+          displayMessage(
+            "info",
+            "Ready. Select device and format, then press Record."
+          );
+        } catch (err) {
+          console.error("Error getting microphone permissions:", err);
+          displayMessage(
+            "error",
+            `Could not get microphone permissions: ${err.message}. Please allow access in your browser.`
+          );
+          audioDeviceSelect.innerHTML =
+            '<option value="">Permission Denied</option>';
+        }
+      }
+
+      // --- List Available Audio Input Devices ---
+      async function listAudioDevices() {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const audioInputDevices = devices.filter(
+            (device) => device.kind === "audioinput"
+          );
+
+          audioDeviceSelect.innerHTML = ""; // Clear existing options
+
+          if (audioInputDevices.length === 0) {
+            audioDeviceSelect.innerHTML =
+              '<option value="">No microphone devices found</option>';
+            recordButton.disabled = true;
+            displayMessage("error", "No microphone devices found.");
+            return;
+          }
+
+          audioInputDevices.forEach((device, index) => {
+            const option = document.createElement("option");
+            option.value = device.deviceId;
+            option.textContent = device.label || `Microphone ${index + 1}`;
+            audioDeviceSelect.appendChild(option);
+          });
+          console.log("Audio input devices listed:", audioInputDevices);
+        } catch (err) {
+          console.error("Error listing audio devices:", err);
+          displayMessage("error", `Error listing devices: ${err.message}`);
+          audioDeviceSelect.innerHTML =
+            '<option value="">Error listing devices</option>';
+          recordButton.disabled = true;
+        }
+      }
+
+      // --- Start Recording ---
+      async function startRecording() {
+        if (isRecording) return;
+
+        const selectedDeviceId = audioDeviceSelect.value;
+        if (!selectedDeviceId) {
+          displayMessage("error", "Please select a microphone device.");
+          return;
+        }
+
+        // Clear previous output and status
+        base64Output.value = "";
+        copyButton.disabled = true;
+        copyStatus.textContent = "";
+        actualRateInfo.textContent = "";
+        actualChannelInfo.textContent = "";
+
+        // Get TARGET format settings (we'll convert to these later)
+        const targetSampleRate = parseInt(targetSampleRateSelect.value, 10);
+        const targetNumChannels = parseInt(targetChannelsSelect.value, 10);
+        const targetFormat = targetBitDepthSelect.value;
+        console.log(
+          `Target format: ${targetSampleRate} Hz, ${targetNumChannels} channels, ${targetFormat}`
+        );
+
+        isRecording = true;
+        recordButton.disabled = true;
+        stopButton.disabled = false;
+        setInputsDisabled(true); // Disable device/format selection during recording
+        recordedChunks = []; // Reset chunks
+
+        displayMessage("info", "Starting recording...");
+
+        try {
+          // --- Initialize Web Audio API ---
+          window.AudioContext =
+            window.AudioContext || window.webkitAudioContext;
+          audioContext = new AudioContext({ sampleRate: targetSampleRate }); // Use default context sample rate initially
+          actualSampleRate = audioContext.sampleRate; // Store the actual rate
+          actualRateInfo.textContent = `(Recording at ${actualSampleRate} Hz)`;
+          console.log(
+            `AudioContext created. Native sample rate: ${actualSampleRate} Hz`
+          );
+
+          // --- Get MediaStream from selected device ---
+          const constraints = {
+            audio: {
+              deviceId: { exact: selectedDeviceId },
+              // We might try to request channels, but it's not guaranteed
+              // channelCount: { ideal: targetNumChannels }
+              // Let's record with the device's default channels for simplicity
+            },
+            video: false,
+          };
+          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log("Got user media stream.");
+
+          // --- Create Audio Nodes ---
+          mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
+
+          // Determine actual number of channels from the source track
+          const audioTrack = mediaStream.getAudioTracks()[0];
+          const trackSettings = audioTrack.getSettings();
+          actualNumChannels =
+            trackSettings.channelCount || mediaStreamSource.channelCount || 1; // Get actual channels
+          actualChannelInfo.textContent = `(${actualNumChannels} channel${
+            actualNumChannels > 1 ? "s" : ""
+          })`;
+          console.log(`Actual recording channels: ${actualNumChannels}`);
+
+          // Create ScriptProcessorNode (Note: Deprecated, but simpler for this example)
+          // Arguments: bufferSize, inputChannels, outputChannels
+          // We need to process the actual number of input channels
+          scriptProcessorNode = audioContext.createScriptProcessor(
+            bufferSize,
+            actualNumChannels,
+            actualNumChannels
+          );
+
+          // --- Handle Audio Data ---
+          scriptProcessorNode.onaudioprocess = (event) => {
+            if (!isRecording) return;
+
+            // Get the raw PCM data (Float32, range -1.0 to 1.0)
+            // event.inputBuffer contains the audio data
+            const inputBuffer = event.inputBuffer;
+            const bufferChannels = [];
+
+            // Clone data for each channel separately
+            for (let i = 0; i < actualNumChannels; i++) {
+              // Make a copy of the channel data to store
+              bufferChannels.push(
+                new Float32Array(inputBuffer.getChannelData(i))
+              );
+            }
+            recordedChunks.push(bufferChannels); // Store the data for all channels for this buffer
+          };
+
+          // --- Connect Nodes ---
+          mediaStreamSource.connect(scriptProcessorNode);
+          // We don't necessarily need to connect to destination unless we want live monitoring
+          scriptProcessorNode.connect(audioContext.destination); // Connect to output (optional)
+
+          displayMessage(
+            "success",
+            `Recording started at ${actualSampleRate} Hz, ${actualNumChannels} channels...`
+          );
+        } catch (err) {
+          console.error("Error starting recording:", err);
+          displayMessage("error", `Error starting recording: ${err.message}`);
+          stopRecording(true); // Clean up if error occurred
+        }
+      }
+
+      // --- Stop Recording ---
+      function stopRecording(errorOccurred = false) {
+        if (!isRecording && !errorOccurred) return; // Only stop if recording or cleaning up error
+
+        console.log("Stopping recording...");
+        isRecording = false;
+        recordButton.disabled = false;
+        stopButton.disabled = true;
+        setInputsDisabled(false); // Re-enable selection
+
+        // Disconnect nodes
+        if (scriptProcessorNode) {
+          scriptProcessorNode.disconnect();
+          scriptProcessorNode.onaudioprocess = null; // Remove handler
+          scriptProcessorNode = null;
+        }
+        if (mediaStreamSource) {
+          mediaStreamSource.disconnect();
+          mediaStreamSource = null;
+        }
+
+        // Stop the media stream tracks
+        if (mediaStream) {
+          mediaStream.getTracks().forEach((track) => track.stop());
+          mediaStream = null;
+          console.log("Media stream tracks stopped.");
+        }
+
+        // Close the AudioContext
+        if (audioContext) {
+          audioContext
+            .close()
+            .then(() => {
+              console.log("AudioContext closed.");
+              audioContext = null;
+              // Process data only if stopped normally and we have chunks
+              if (!errorOccurred && recordedChunks.length > 0) {
+                processAndEncode();
+              } else if (errorOccurred) {
+                displayMessage("error", "Recording stopped due to an error.");
+              } else {
+                displayMessage(
+                  "info",
+                  "Recording stopped. No audio data captured."
+                );
+              }
+            })
+            .catch((err) => {
+              console.error("Error closing AudioContext:", err);
+              // Still try to process if stopped normally
+              if (!errorOccurred && recordedChunks.length > 0) {
+                processAndEncode();
+              }
+            });
+        } else if (!errorOccurred && recordedChunks.length > 0) {
+          // If context was already null for some reason, but we have data
+          processAndEncode();
+        } else if (errorOccurred) {
+          displayMessage("error", "Recording stopped due to an error.");
+        }
+      }
+
+      // --- Process Recorded Data and Encode to Base64 ---
+      function processAndEncode() {
+        if (recordedChunks.length === 0) {
+          displayMessage("warning", "No audio data was recorded.");
+          return;
+        }
+
+        displayMessage("loading", "Processing recorded audio...");
+
+        // Use setTimeout to allow UI update before processing
+        setTimeout(() => {
+          try {
+            // 1. Concatenate recorded chunks for each channel
+            const numberOfChannels = recordedChunks[0].length; // Should match actualNumChannels
+            const totalLength = recordedChunks.reduce(
+              (sum, chunks) => sum + chunks[0].length,
+              0
+            );
+            const combinedChannels = [];
+
+            for (let i = 0; i < numberOfChannels; i++) {
+              const channelData = new Float32Array(totalLength);
+              let offset = 0;
+              recordedChunks.forEach((buffer) => {
+                channelData.set(buffer[i], offset);
+                offset += buffer[i].length;
+              });
+              combinedChannels.push(channelData);
+            }
+            console.log(
+              `Concatenated ${numberOfChannels} channels, total length: ${totalLength} samples per channel.`
+            );
+
+            // Clear recorded chunks from memory
+            recordedChunks = [];
+
+            // 2. Get TARGET format settings
+            const targetSampleRate = parseInt(targetSampleRateSelect.value, 10);
+            const targetNumChannels = parseInt(targetChannelsSelect.value, 10);
+            const targetFormat = targetBitDepthSelect.value;
+
+            // --- WARNING: Resampling is NOT implemented ---
+            // The output Base64 will represent audio at the *actual* recording sample rate.
+            // We inform the user via the UI. For true format conversion, resampling would be needed here.
+            if (actualSampleRate !== targetSampleRate) {
+              console.warn(
+                `Sample rate mismatch: Recorded at ${actualSampleRate} Hz, target is ${targetSampleRate} Hz. Resampling is NOT implemented. Output will be at ${actualSampleRate} Hz.`
+              );
+              displayMessage(
+                "warning",
+                `Processing... (Note: Output sample rate is ${actualSampleRate} Hz, not ${targetSampleRate} Hz as resampling is not implemented)`
+              );
+            }
+
+            // --- Channel Handling ---
+            let finalChannelData = [];
+            if (numberOfChannels === 1 && targetNumChannels === 2) {
+              // Convert Mono to Stereo by duplicating channel
+              finalChannelData.push(combinedChannels[0]);
+              finalChannelData.push(new Float32Array(combinedChannels[0])); // Duplicate
+              console.log("Converted mono recording to stereo output.");
+            } else if (numberOfChannels === 2 && targetNumChannels === 1) {
+              // Convert Stereo to Mono by averaging channels (simple mixdown)
+              const monoData = new Float32Array(totalLength);
+              for (let i = 0; i < totalLength; i++) {
+                monoData[i] =
+                  (combinedChannels[0][i] + combinedChannels[1][i]) / 2;
+              }
+              finalChannelData.push(monoData);
+              console.log("Converted stereo recording to mono output.");
+            } else {
+              // Channels match or no conversion needed (e.g., mono->mono, stereo->stereo)
+              finalChannelData = combinedChannels;
+            }
+            const outputNumChannels = finalChannelData.length;
+
+            // 3. Interleave channels if output is stereo
+            let interleavedData;
+            if (outputNumChannels === 1) {
+              interleavedData = finalChannelData[0]; // Already interleaved (it's mono)
+            } else if (outputNumChannels === 2) {
+              interleavedData = new Float32Array(totalLength * 2);
+              for (let i = 0; i < totalLength; i++) {
+                interleavedData[i * 2] = finalChannelData[0][i]; // Left channel
+                interleavedData[i * 2 + 1] = finalChannelData[1][i]; // Right channel
+              }
+              console.log("Interleaved stereo data.");
+            } else {
+              throw new Error(
+                `Unsupported number of output channels: ${outputNumChannels}`
+              );
+            }
+
+            // 4. Convert Float32 PCM to Target Format (8u, 16s, 32f)
+            let outputBuffer;
+            let bytesPerSample;
+            const numSamples = interleavedData.length;
+
+            if (targetFormat === "8u") {
+              bytesPerSample = 1;
+              outputBuffer = new Uint8Array(numSamples);
+              for (let i = 0; i < numSamples; i++) {
+                const sample = Math.max(-1, Math.min(1, interleavedData[i])); // Clamp
+                outputBuffer[i] = Math.round((sample + 1) * 127.5); // Convert -1..1 to 0..255
+              }
+              console.log("Converted to 8-bit Unsigned Int.");
+            } else if (targetFormat === "16s") {
+              bytesPerSample = 2;
+              outputBuffer = new Int16Array(numSamples);
+              for (let i = 0; i < numSamples; i++) {
+                const sample = Math.max(-1, Math.min(1, interleavedData[i])); // Clamp
+                outputBuffer[i] = Math.round(sample * 32767); // Convert -1..1 to -32767..32767
+              }
+              console.log("Converted to 16-bit Signed Int.");
+            } else {
+              // 32f
+              bytesPerSample = 4;
+              outputBuffer = new Float32Array(interleavedData); // Already Float32
+              console.log("Kept as 32-bit Float.");
+            }
+
+            // 5. Create ArrayBuffer (handling endianness for 16s/32f if needed - DataView is safer)
+            // For simplicity here, we assume the TypedArray handles system endianness correctly for LE.
+            // For cross-platform guarantees, using DataView for 16s/32f is better.
+            const finalArrayBuffer = outputBuffer.buffer;
+            console.log(
+              `Created final ArrayBuffer: ${finalArrayBuffer.byteLength} bytes.`
+            );
+
+            // 6. Encode ArrayBuffer to Base64
+            const base64String = arrayBufferToBase64(finalArrayBuffer);
+            console.log(
+              `Encoded to Base64 string (length: ${base64String.length})`
+            );
+
+            // 7. Display Base64 Output
+            base64Output.value = base64String;
+            copyButton.disabled = false; // Enable copy button
+            displayMessage(
+              "success",
+              `Processing complete. Base64 generated for ${actualSampleRate} Hz, ${outputNumChannels}-channel, ${targetFormat} audio.`
+            );
+          } catch (err) {
+            console.error("Error processing audio:", err);
+            displayMessage("error", `Error processing audio: ${err.message}`);
+            base64Output.value = ""; // Clear output on error
+            copyButton.disabled = true;
+          }
+        }, 50); // Delay processing slightly
+      }
+
+      // --- Helper: Convert Float32 PCM Sample to Target Format ---
+      // This logic is now integrated into processAndEncode for efficiency
+
+      // --- Helper: Convert ArrayBuffer to Base64 ---
+      function arrayBufferToBase64(buffer) {
+        let binary = "";
+        const bytes = new Uint8Array(buffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        return window.btoa(binary);
+      }
+
+      // --- Helper: Display Status Messages ---
+      function displayMessage(type, message) {
+        statusArea.textContent = ""; // Clear previous content (including spinner)
+        statusArea.innerHTML = ""; // Clear previous content (including spinner)
+        statusArea.className =
+          "mt-4 p-3 text-center text-sm rounded-md min-h-[40px]"; // Reset classes
+
+        if (type === "error") {
+          statusArea.classList.add("bg-red-100", "text-red-700");
+          statusArea.textContent = message;
+        } else if (type === "success") {
+          statusArea.classList.add("bg-green-100", "text-green-700");
+          statusArea.textContent = message;
+        } else if (type === "info") {
+          statusArea.classList.add("bg-blue-100", "text-blue-700");
+          statusArea.textContent = message;
+        } else if (type === "warning") {
+          statusArea.classList.add("bg-yellow-100", "text-yellow-700");
+          statusArea.textContent = message;
+        } else if (type === "loading") {
+          statusArea.classList.add("bg-yellow-100", "text-yellow-700");
+          statusArea.innerHTML = `<span class="spinner"></span> ${message}`; // Add spinner
+        } else {
+          statusArea.textContent = message; // Default plain text
+        }
+        console.log(`Status [${type}]: ${message}`);
+      }
+
+      // --- Helper: Enable/Disable Format Inputs ---
+      function setInputsDisabled(disabled) {
+        audioDeviceSelect.disabled = disabled;
+        targetSampleRateSelect.disabled = disabled;
+        targetChannelsSelect.disabled = disabled;
+        targetBitDepthSelect.disabled = disabled;
+      }
+
+      // --- Helper: Copy to Clipboard ---
+      async function copyToClipboard() {
+        if (!base64Output.value) return;
+
+        try {
+          await navigator.clipboard.writeText(base64Output.value);
+          copyStatus.textContent = "Copied!";
+          setTimeout(() => {
+            copyStatus.textContent = "";
+          }, 2000); // Clear status after 2s
+          console.log("Base64 copied to clipboard.");
+        } catch (err) {
+          console.error("Failed to copy text: ", err);
+          copyStatus.textContent = "Copy failed!";
+          setTimeout(() => {
+            copyStatus.textContent = "";
+          }, 2000);
+        }
+      }
+
+      // --- Event Listeners ---
+      recordButton.addEventListener("click", startRecording);
+      stopButton.addEventListener("click", () => stopRecording(false)); // Pass false for normal stop
+      copyButton.addEventListener("click", copyToClipboard);
+      // Optional: Update device list if devices change (e.g., USB mic plugged in)
+      navigator.mediaDevices.addEventListener("devicechange", listAudioDevices);
+
+      // --- Start Initialization ---
+      window.addEventListener("load", init);
+    </script>
+  </body>
+</html>
